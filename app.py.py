@@ -1,13 +1,38 @@
-from streamlit_back_camera_input import back_camera_input
 import io
 import os
 from google import genai
 from PIL import Image
 import streamlit as st
 
-# 1. Page Configuration
+# 1. Page Config & CSS Scaling Rules
 st.set_page_config(
     page_title="Book Scanner to Gemini UI", page_icon="📚", layout="centered"
+)
+
+# Responsive mobile CSS to keep camera container locked within screen height
+st.markdown(
+    """
+    <style>
+        /* Restrain camera element height so no scrolling is needed */
+        div[data-testid="stCameraInput"] {
+            max-height: 42vh !important;
+            overflow: hidden !important;
+            border-radius: 12px;
+        }
+        div[data-testid="stCameraInput"] video {
+            max-height: 40vh !important;
+            object-fit: cover !important;
+        }
+        /* Mobile gallery thumbnail framing */
+        .thumb-box {
+            border: 1px solid #E3E3E3;
+            border-radius: 8px;
+            padding: 4px;
+            background: #FAFAFA;
+        }
+    </style>
+""",
+    unsafe_allow_html=True,
 )
 
 # 2. Session State Initialization
@@ -16,53 +41,51 @@ if "page_images" not in st.session_state:
 if "raw_html" not in st.session_state:
   st.session_state["raw_html"] = None
 
-# 3. API Key Initialization (Safely defined at root)
+# Safely extract API Key
 api_key = ""
 if "GEMINI_API_KEY" in st.secrets:
   api_key = st.secrets["GEMINI_API_KEY"]
 elif "GEMINI_API_KEY" in os.environ:
   api_key = os.environ["GEMINI_API_KEY"]
 
-# Initialize Client safely
 client = genai.Client(api_key=api_key) if api_key else None
 
 st.title("📚 Book Page Scanner")
 
-# Diagnostic check visible on page
 if not api_key:
   st.error(
-      "❌ API Key NOT detected! Please check Streamlit Secrets under Manage"
-      " App."
+      "❌ API Key NOT detected! Check Streamlit Secrets under Manage App."
   )
 
-st.write("Capture book pages sequentially, then compile them into one view.")
-
-# 4. Camera Capture
-camera_image = back_camera_input()
+# 3. Continuous Camera Input (Scales to Mobile Viewport)
+camera_image = st.camera_input("Snap Page", label_visibility="collapsed")
 
 if camera_image:
   img_bytes = camera_image.getvalue()
+  # Add image if queue is empty or snapshot is not identical to last addition
   if (
       not st.session_state["page_images"]
       or st.session_state["page_images"][-1]["bytes"] != img_bytes
   ):
     pil_img = Image.open(io.BytesIO(img_bytes))
-    pil_img.thumbnail((1500, 1500))  # Downscale for performance
+    pil_img.thumbnail((1500, 1500))  # Downscale to preserve memory
     st.session_state["page_images"].append(
         {"bytes": img_bytes, "pil": pil_img}
     )
     st.success(f"Added Page {len(st.session_state['page_images'])} to queue!")
+    st.rerun()
 
-# Initialize button state safely
-finish_clicked = False
-
-# 5. Queue Management & Processing
+# 4. Scanned Page Gallery & Deletion Controls
 if st.session_state["page_images"]:
-  st.info(f"Pages captured so far: **{len(st.session_state['page_images'])}**")
-  col_clear, col_finish = st.columns(2)
+  st.divider()
+  st.subheader(
+      f"🖼️ Scanned Queue ({len(st.session_state['page_images'])} Pages)"
+  )
 
+  # Top-level Global Actions
+  col_clear, col_finish = st.columns(2)
   with col_clear:
-    if st.button("🗑️ Reset Queue", use_container_width=True):
+    if st.button("🗑️ Delete All Pages", use_container_width=True):
       st.session_state["page_images"] = []
       st.session_state["raw_html"] = None
       st.rerun()
@@ -72,7 +95,25 @@ if st.session_state["page_images"]:
         "🚀 Finish & Process Book", type="primary", use_container_width=True
     )
 
-# 6. AI OCR Processing Block
+  # Display scrollable page thumbnails with selective deletion
+  st.write("Review captured pages below:")
+  for idx, page_data in enumerate(st.session_state["page_images"]):
+    grid_col1, grid_col2 = st.columns([1, 2])
+
+    with grid_col1:
+      st.image(page_data["pil"], caption=f"Page {idx + 1}", width=120)
+
+    with grid_col2:
+      st.write(f"**Page {idx + 1}**")
+      if st.button(f"❌ Delete Page {idx + 1}", key=f"del_{idx}"):
+        st.session_state["page_images"].pop(idx)
+        st.rerun()
+
+  st.divider()
+else:
+  finish_clicked = False
+
+# 5. AI OCR Processing Block
 if finish_clicked and client:
   with st.spinner(
       f"Processing {len(st.session_state['page_images'])} pages with AI..."
@@ -80,12 +121,13 @@ if finish_clicked and client:
     pil_list = [item["pil"] for item in st.session_state["page_images"]]
     prompt = (
         "Extract all text sequentially across all provided page images."
-        " Format using inner HTML elements (<h1>, <h2>, <p>, <strong>, <em>)."
-        " Return ONLY valid HTML without markdown formatting."
+        " Preserve original typographical styling: convert bold text to"
+        " <strong>...</strong>, italics to <em>...</em>, and headers to <h1>"
+        " or <h2>. Return ONLY valid inner HTML elements without markdown code"
+        " block wrappers."
     )
 
     try:
-      # Call Gemini API
       response = client.models.generate_content(
           model="gemini-2.0-flash", contents=[*pil_list, prompt]
       )
@@ -95,9 +137,8 @@ if finish_clicked and client:
     except Exception as e:
       st.error(f"⚠️ Gemini API Error Details: {e}")
 
-# 7. Reader Controls & Render
+# 6. Gemini Reader Display & Offline Export
 if st.session_state.get("raw_html"):
-  st.divider()
   st.subheader("📖 Reader Controls")
 
   ctrl_col1, ctrl_col2 = st.columns([1, 1])
