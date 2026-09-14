@@ -1,3 +1,4 @@
+from streamlit_back_camera_input import back_camera_input
 import io
 import os
 from google import genai
@@ -37,7 +38,7 @@ if not api_key:
 st.write("Capture book pages sequentially, then compile them into one view.")
 
 # 4. Camera Capture
-camera_image = st.camera_input("Take a photo of a page")
+camera_image = back_camera_input()
 
 if camera_image:
   img_bytes = camera_image.getvalue()
@@ -86,7 +87,7 @@ if finish_clicked and client:
     try:
       # Call Gemini API
       response = client.models.generate_content(
-          model="gemini-2.5-flash", contents=[*pil_list, prompt]
+          model="gemini-2.0-flash", contents=[*pil_list, prompt]
       )
       st.session_state["raw_html"] = (
           response.text.replace("```html", "").replace("```", "").strip()
