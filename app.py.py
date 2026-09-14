@@ -63,32 +63,28 @@ if st.session_state["page_images"]:
     )
 
   # --- 3. AGGREGATED AI OCR PROCESSING ---
-  if finish_clicked and client:
-    with st.spinner(
-        f"Processing {len(st.session_state['page_images'])} pages with AI..."
-    ):
-      pil_list = [item["pil"] for item in st.session_state["page_images"]]
+if finish_clicked and client:
+  with st.spinner(
+      f"Processing {len(st.session_state['page_images'])} pages with AI..."
+  ):
+    pil_list = [item["pil"] for item in st.session_state["page_images"]]
+    prompt = (
+        "Extract all text sequentially across all provided page images."
+        " Format using inner HTML elements (<h1>, <h2>, <p>, <strong>, <em>)."
+        " Return ONLY valid HTML without code blocks."
+    )
 
-      prompt = (
-          "You are an expert OCR and document formatting engine.\n"
-          "1. Extract all text sequentially across all provided page images.\n"
-          "2. Preserve original typographical styling: convert bold text to"
-          " <strong>...</strong>, italics to <em>...</em>, and headers to <h1>"
-          " or <h2>.\n"
-          "3. Seamlessly merge sentences and paragraphs that break across page"
-          " boundaries.\n"
-          "4. Return ONLY valid inner HTML elements without any markdown code"
-          " block wrappers."
-      )
-
+    try:
+      # Try gemini-2.5-flash
       response = client.models.generate_content(
           model="gemini-2.5-flash", contents=[*pil_list, prompt]
       )
-
-      # Clean raw response string
       st.session_state["raw_html"] = (
           response.text.replace("```html", "").replace("```", "").strip()
       )
+    except Exception as e:
+      # Expose exact API error instead of Streamlit redaction banner
+      st.error(f"⚠️ Gemini API Error Details: {e}")
 
 # --- 4. READER CONTROLS & DYNAMIC DISPLAY ---
 if st.session_state.get("raw_html"):
