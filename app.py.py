@@ -1,52 +1,61 @@
 import io
 import os
-import streamlit as st
 from google import genai
 from PIL import Image
+import streamlit as st
 
-# 1. Page Configuration & Initial Layout
+# 1. Page Configuration
 st.set_page_config(
     page_title="Book Scanner to Gemini UI", page_icon="📚", layout="centered"
 )
 
-# Initialize Session State Variables
+# 2. Session State Initialization
 if "page_images" not in st.session_state:
   st.session_state["page_images"] = []
 if "raw_html" not in st.session_state:
   st.session_state["raw_html"] = None
 
-# Initialize API Client
-# Checks Streamlit Secrets first, then environment variables, then empty fallback
+# 3. API Key Initialization (Safely defined at root)
 api_key = ""
 if "GEMINI_API_KEY" in st.secrets:
   api_key = st.secrets["GEMINI_API_KEY"]
 elif "GEMINI_API_KEY" in os.environ:
   api_key = os.environ["GEMINI_API_KEY"]
 
+# Initialize Client safely
 client = genai.Client(api_key=api_key) if api_key else None
 
 st.title("📚 Book Page Scanner")
+
+# Diagnostic check visible on page
+if not api_key:
+  st.error(
+      "❌ API Key NOT detected! Please check Streamlit Secrets under Manage"
+      " App."
+  )
+
 st.write("Capture book pages sequentially, then compile them into one view.")
 
-# --- 2. CAMERA CAPTURE & QUEUE MANAGEMENT ---
+# 4. Camera Capture
 camera_image = st.camera_input("Take a photo of a page")
 
 if camera_image:
   img_bytes = camera_image.getvalue()
-  # Prevent duplicate additions of the same snapshot
   if (
       not st.session_state["page_images"]
       or st.session_state["page_images"][-1]["bytes"] != img_bytes
   ):
     pil_img = Image.open(io.BytesIO(img_bytes))
-    # Resize image to save memory and ensure high performance
-    pil_img.thumbnail((1500, 1500))
+    pil_img.thumbnail((1500, 1500))  # Downscale for performance
     st.session_state["page_images"].append(
         {"bytes": img_bytes, "pil": pil_img}
     )
     st.success(f"Added Page {len(st.session_state['page_images'])} to queue!")
 
-# Display current queue controls
+# Initialize button state safely
+finish_clicked = False
+
+# 5. Queue Management & Processing
 if st.session_state["page_images"]:
   st.info(f"Pages captured so far: **{len(st.session_state['page_images'])}**")
   col_clear, col_finish = st.columns(2)
@@ -62,7 +71,7 @@ if st.session_state["page_images"]:
         "🚀 Finish & Process Book", type="primary", use_container_width=True
     )
 
-  # --- 3. AGGREGATED AI OCR PROCESSING ---
+# 6. AI OCR Processing Block
 if finish_clicked and client:
   with st.spinner(
       f"Processing {len(st.session_state['page_images'])} pages with AI..."
@@ -71,11 +80,11 @@ if finish_clicked and client:
     prompt = (
         "Extract all text sequentially across all provided page images."
         " Format using inner HTML elements (<h1>, <h2>, <p>, <strong>, <em>)."
-        " Return ONLY valid HTML without code blocks."
+        " Return ONLY valid HTML without markdown formatting."
     )
 
     try:
-      # Try gemini-2.5-flash
+      # Call Gemini API
       response = client.models.generate_content(
           model="gemini-2.5-flash", contents=[*pil_list, prompt]
       )
@@ -83,19 +92,16 @@ if finish_clicked and client:
           response.text.replace("```html", "").replace("```", "").strip()
       )
     except Exception as e:
-      # Expose exact API error instead of Streamlit redaction banner
       st.error(f"⚠️ Gemini API Error Details: {e}")
 
-# --- 4. READER CONTROLS & DYNAMIC DISPLAY ---
+# 7. Reader Controls & Render
 if st.session_state.get("raw_html"):
   st.divider()
   st.subheader("📖 Reader Controls")
 
   ctrl_col1, ctrl_col2 = st.columns([1, 1])
-
   with ctrl_col1:
     dark_mode = st.toggle("🌙 Dark Mode", value=False)
-
   with ctrl_col2:
     font_size = st.select_slider(
         "🔤 Font Size",
@@ -103,7 +109,6 @@ if st.session_state.get("raw_html"):
         value="Medium",
     )
 
-  # Size Map Definitions
   size_map = {
       "Small": "14px",
       "Medium": "16px",
@@ -112,21 +117,23 @@ if st.session_state.get("raw_html"):
   }
   selected_size = size_map[font_size]
 
-  # Theme CSS Variables
   if dark_mode:
-    bg_body = "#121212"
-    bg_card = "#1E1E1E"
-    text_color = "#E3E3E3"
-    border_color = "#333333"
-    h1_color = "#8AB4F8"
+    bg_body, bg_card, text_color, border_color, h1_color = (
+        "#121212",
+        "#1E1E1E",
+        "#E3E3E3",
+        "#333333",
+        "#8AB4F8",
+    )
   else:
-    bg_body = "#F8F9FA"
-    bg_card = "#FFFFFF"
-    text_color = "#1F1F1F"
-    border_color = "#E3E3E3"
-    h1_color = "#0B57D0"
+    bg_body, bg_card, text_color, border_color, h1_color = (
+        "#F8F9FA",
+        "#FFFFFF",
+        "#1F1F1F",
+        "#E3E3E3",
+        "#0B57D0",
+    )
 
-  # Render Interactive HTML Display
   styled_reader_html = f"""
     <div style="
         background-color: {bg_card};
@@ -152,7 +159,6 @@ if st.session_state.get("raw_html"):
   st.markdown(styled_reader_html, unsafe_allow_html=True)
   st.divider()
 
-  # Construct Standalone Downloadable HTML Document
   standalone_doc = f"""<!DOCTYPE html>
 <html>
 <head>
