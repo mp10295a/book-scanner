@@ -4,31 +4,23 @@ from google import genai
 from PIL import Image
 import streamlit as st
 
-# 1. Page Config & CSS Scaling Rules
+# 1. Page Setup & Mobile Styling
 st.set_page_config(
     page_title="Book Scanner to Gemini UI", page_icon="📚", layout="centered"
 )
 
-# Responsive mobile CSS to keep camera container locked within screen height
+# Custom CSS to lock camera height and gallery styling
 st.markdown(
     """
     <style>
-        /* Restrain camera element height so no scrolling is needed */
-        div[data-testid="stCameraInput"] {
-            max-height: 42vh !important;
-            overflow: hidden !important;
+        .block-container {
+            padding-top: 1rem !important;
+            padding-bottom: 2rem !important;
+            max-width: 500px !important;
+        }
+        iframe {
             border-radius: 12px;
-        }
-        div[data-testid="stCameraInput"] video {
-            max-height: 40vh !important;
-            object-fit: cover !important;
-        }
-        /* Mobile gallery thumbnail framing */
-        .thumb-box {
-            border: 1px solid #E3E3E3;
-            border-radius: 8px;
-            padding: 4px;
-            background: #FAFAFA;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
         }
     </style>
 """,
@@ -57,32 +49,85 @@ if not api_key:
       "❌ API Key NOT detected! Check Streamlit Secrets under Manage App."
   )
 
-# 3. Continuous Camera Input (Scales to Mobile Viewport)
-camera_image = st.camera_input("Snap Page", label_visibility="collapsed")
+# 3. Custom HTML5 Rear Camera Feed Component
+# Forces facingMode: "environment" (rear camera) and fills portrait view
+camera_html = """
+<div style="width: 100%; display: flex; flex-direction: column; align-items: center; gap: 8px;">
+    <video id="webcam" autoplay playsinline style="width: 100%; height: 50vh; object-fit: cover; border-radius: 12px; background: #000;"></video>
+    <button id="snap-btn" style="width: 100%; height: 48px; background-color: #0B57D0; color: white; border: none; border-radius: 24px; font-weight: 600; font-size: 16px; cursor: pointer;">
+        📷 Snap Page Photo
+    </button>
+    <canvas id="canvas" style="display:none;"></canvas>
+</div>
 
-if camera_image:
-  img_bytes = camera_image.getvalue()
-  # Add image if queue is empty or snapshot is not identical to last addition
+<script>
+    const video = document.getElementById('webcam');
+    const canvas = document.getElementById('canvas');
+    const snapBtn = document.getElementById('snap-btn');
+
+    // Request rear camera with portrait resolution parameters
+    navigator.mediaDevices.getUserMedia({
+        video: {
+            facingMode: { exact: "environment" },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
+        }
+    }).then(stream => {
+        video.srcObject = stream;
+    }).catch(err => {
+        // Fallback for desktop browsers without rear camera
+        navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
+            video.srcObject = stream;
+        });
+    });
+
+    snapBtn.addEventListener('click', () => {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+        
+        // Send image data to Streamlit backend via window communication
+        window.parent.postMessage({
+            type: "streamlit:setComponentValue",
+            value: dataUrl
+        }, "*");
+    });
+</script>
+"""
+
+# Render Camera HTML inside high-priority container
+captured_data_url = st.components.v1.html(camera_html, height=440)
+
+# Process snap payload
+if captured_data_url:
+  import base64
+
+  # Decode base64 image data from HTML JS component
+  header, encoded = captured_data_url.split(",", 1)
+  img_bytes = base64.b64decode(encoded)
+
   if (
       not st.session_state["page_images"]
       or st.session_state["page_images"][-1]["bytes"] != img_bytes
   ):
     pil_img = Image.open(io.BytesIO(img_bytes))
-    pil_img.thumbnail((1500, 1500))  # Downscale to preserve memory
+    pil_img.thumbnail((1500, 1500))
     st.session_state["page_images"].append(
         {"bytes": img_bytes, "pil": pil_img}
     )
     st.success(f"Added Page {len(st.session_state['page_images'])} to queue!")
     st.rerun()
 
-# 4. Scanned Page Gallery & Deletion Controls
+# 4. Scanned Page Gallery & Selective Delete Controls
 if st.session_state["page_images"]:
   st.divider()
   st.subheader(
       f"🖼️ Scanned Queue ({len(st.session_state['page_images'])} Pages)"
   )
 
-  # Top-level Global Actions
   col_clear, col_finish = st.columns(2)
   with col_clear:
     if st.button("🗑️ Delete All Pages", use_container_width=True):
@@ -95,14 +140,11 @@ if st.session_state["page_images"]:
         "🚀 Finish & Process Book", type="primary", use_container_width=True
     )
 
-  # Display scrollable page thumbnails with selective deletion
   st.write("Review captured pages below:")
   for idx, page_data in enumerate(st.session_state["page_images"]):
     grid_col1, grid_col2 = st.columns([1, 2])
-
     with grid_col1:
       st.image(page_data["pil"], caption=f"Page {idx + 1}", width=120)
-
     with grid_col2:
       st.write(f"**Page {idx + 1}**")
       if st.button(f"❌ Delete Page {idx + 1}", key=f"del_{idx}"):
@@ -113,7 +155,7 @@ if st.session_state["page_images"]:
 else:
   finish_clicked = False
 
-# 5. AI OCR Processing Block
+# 5. AI Processing Engine
 if finish_clicked and client:
   with st.spinner(
       f"Processing {len(st.session_state['page_images'])} pages with AI..."
@@ -137,7 +179,7 @@ if finish_clicked and client:
     except Exception as e:
       st.error(f"⚠️ Gemini API Error Details: {e}")
 
-# 6. Gemini Reader Display & Offline Export
+# 6. Reader View Controls & Offline Export
 if st.session_state.get("raw_html"):
   st.subheader("📖 Reader Controls")
 
