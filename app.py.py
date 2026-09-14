@@ -16,7 +16,13 @@ if "raw_html" not in st.session_state:
   st.session_state["raw_html"] = None
 
 # Initialize API Client
-api_key = os.environ.get("GEMINI_API_KEY", "")
+# Checks Streamlit Secrets first, then environment variables, then empty fallback
+api_key = ""
+if "GEMINI_API_KEY" in st.secrets:
+  api_key = st.secrets["GEMINI_API_KEY"]
+elif "GEMINI_API_KEY" in os.environ:
+  api_key = os.environ["GEMINI_API_KEY"]
+
 client = genai.Client(api_key=api_key) if api_key else None
 
 st.title("📚 Book Page Scanner")
